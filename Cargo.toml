@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "tasks",
+    "wasm-bench",
+]
