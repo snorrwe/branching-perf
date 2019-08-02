@@ -48,8 +48,8 @@ The WASM and JS tests were ran using Node.JS 10.15.1<br>
 
 ## Running
 
-- Native: cd `wasm-bench` then `cargo bench`
-- WASM: cd `wasm-bench` then `cargo web build --release` then `node target/wasm32-unknown-unknown/release/wasm-bench.js`
+- Native: `cd wasm-bench` then `cargo bench`
+- WASM: `cd wasm-bench` then `cargo web build --release` then `node target/wasm32-unknown-unknown/release/wasm-bench.js`
 - JS:`cd js-bench` then `node main.js`
 
 ## Results
