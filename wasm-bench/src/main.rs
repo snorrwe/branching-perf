@@ -7,20 +7,37 @@ extern crate stdweb;
 
 use stdweb::unstable::TryInto;
 
+const DATA_SIZE: usize = 2048;
+
+pub struct Auxiliary {
+    pub data: [u8; DATA_SIZE],
+}
+
+impl Default for Auxiliary {
+    fn default() -> Self {
+        Self {
+            data: [0; DATA_SIZE],
+        }
+    }
+}
+
 /// The common interface defining a task
 pub trait Task {
     fn with_prereq(self, prereq: i32) -> Self;
-    fn tick(&self, inp: i32, prereq: i32) -> i32;
+    fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32;
 }
+
+pub type TaskCallable = dyn Fn(&mut Auxiliary, i32) -> i32;
+pub type TaskFnPtr = fn(&mut Auxiliary, i32) -> i32;
 
 /// Holds callable tasks and prerequisites
 pub struct TaskV1 {
-    task: Box<dyn Fn(i32, i32) -> i32>,
+    task: Box<TaskCallable>,
     prereq: Option<i32>,
 }
 
 impl TaskV1 {
-    pub fn new(task: Box<dyn Fn(i32, i32) -> i32>) -> Self {
+    pub fn new(task: Box<TaskCallable>) -> Self {
         Self { task, prereq: None }
     }
 }
@@ -31,7 +48,7 @@ impl Task for TaskV1 {
         self
     }
 
-    fn tick(&self, inp: i32, prereq: i32) -> i32 {
+    fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
         if self.prereq.map(|p| p > prereq).unwrap_or(true) {
             (*self.task)(inp, prereq)
         } else {
@@ -42,11 +59,11 @@ impl Task for TaskV1 {
 
 /// Holds callable tasks
 pub struct TaskV2 {
-    task: Box<dyn Fn(i32, i32) -> i32>,
+    task: Box<TaskCallable>,
 }
 
 impl TaskV2 {
-    pub fn new(task: Box<dyn Fn(i32, i32) -> i32>) -> Self {
+    pub fn new(task: Box<TaskCallable>) -> Self {
         Self { task }
     }
 }
@@ -59,7 +76,7 @@ impl Task for TaskV2 {
         ))
     }
 
-    fn tick(&self, inp: i32, prereq: i32) -> i32 {
+    fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
         (*self.task)(inp, prereq)
     }
 }
@@ -68,12 +85,12 @@ impl Task for TaskV2 {
 /// This has the limitation of holding only stateless tasks
 /// But has the benefit of avoiding Boxes
 pub struct TaskV3 {
-    task: fn(i32, i32) -> i32,
+    task: TaskFnPtr,
     prereq: Option<i32>,
 }
 
 impl TaskV3 {
-    pub fn new(task: fn(i32, i32) -> i32) -> Self {
+    pub fn new(task: TaskFnPtr) -> Self {
         Self { task, prereq: None }
     }
 }
@@ -84,7 +101,7 @@ impl Task for TaskV3 {
         self
     }
 
-    fn tick(&self, inp: i32, prereq: i32) -> i32 {
+    fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
         if self.prereq.map(|p| p > prereq).unwrap_or(true) {
             (self.task)(inp, prereq)
         } else {
@@ -97,9 +114,14 @@ pub fn prepare_v1() -> Vec<TaskV1> {
     (0..1_000_000)
         .map(|i| {
             if i % 128 == 0 {
-                TaskV1::new(Box::new(|i, _| i)).with_prereq(32)
+                TaskV1::new(Box::new(move |x, j| {
+                    x.data[pseudo_random_ind(i + j)] as i32
+                }))
+                .with_prereq(32)
             } else {
-                TaskV1::new(Box::new(|i, _| i * 2))
+                TaskV1::new(Box::new(move |x, j| {
+                    x.data[pseudo_random_ind(i + j)] as i32 * 2
+                }))
             }
         })
         .collect::<Vec<_>>()
@@ -109,9 +131,14 @@ pub fn prepare_v2() -> Vec<TaskV2> {
     (0..1_000_000)
         .map(|i| {
             if i % 128 == 0 {
-                TaskV2::new(Box::new(|i, _| i)).with_prereq(32)
+                TaskV2::new(Box::new(move |x, j| {
+                    x.data[pseudo_random_ind(i + j)] as i32
+                }))
+                .with_prereq(32)
             } else {
-                TaskV2::new(Box::new(|i, _| i * 2))
+                TaskV2::new(Box::new(move |x, j| {
+                    x.data[pseudo_random_ind(i + j)] as i32 * 2
+                }))
             }
         })
         .collect::<Vec<_>>()
@@ -121,22 +148,40 @@ pub fn prepare_v3() -> Vec<TaskV3> {
     (0..1_000_000)
         .map(|i| {
             if i % 128 == 0 {
-                TaskV3::new(|i, _| i).with_prereq(32)
+                TaskV3::new(|i, j| i.data[pseudo_random_ind(j)] as i32).with_prereq(32)
             } else {
-                TaskV3::new(|i, _| i * 2)
+                TaskV3::new(|i, j| i.data[pseudo_random_ind(j)] as i32 * 2)
             }
         })
         .collect::<Vec<_>>()
+}
+
+// Simulate random memory access
+pub fn pseudo_random_ind(i: i32) -> usize {
+    let i = match i & 255 {
+        1 => i * 2,
+        2 => i * 8,
+        4 => i * 3,
+        8 => i * 2,
+        16 => i * 7,
+        32 => i * 5,
+        64 => i * 9,
+        128 => i * 10,
+        _ => i,
+    };
+
+    i as usize % DATA_SIZE
 }
 
 macro_rules! js_benchmark {
     ($tasks: ident) => {{
         let results = (0..1_000)
             .map(|_| {
+                let mut aux = Auxiliary::default();
                 let start = js! {return Date.now();};
 
                 $tasks.iter().enumerate().for_each(|(i, t)| {
-                    t.tick(0, i as i32);
+                    t.tick(&mut aux, i as i32);
                 });
 
                 let duration = js! {
@@ -198,12 +243,18 @@ mod tests {
     use test::Bencher;
 
     #[bench]
+    fn bench_index_creation(b: &mut Bencher) {
+        b.iter(move || (0..1000).map(|i| pseudo_random_ind(i)).sum::<usize>());
+    }
+
+    #[bench]
     fn v1(b: &mut Bencher) {
         let tasks = prepare_v1();
+        let mut aux = Auxiliary::default();
 
         b.iter(|| {
             tasks.iter().enumerate().for_each(|(i, t)| {
-                t.tick(1, i as i32);
+                t.tick(&mut aux, i as i32);
             })
         });
     }
@@ -211,10 +262,11 @@ mod tests {
     #[bench]
     fn v2(b: &mut Bencher) {
         let tasks = prepare_v2();
+        let mut aux = Auxiliary::default();
 
         b.iter(|| {
             tasks.iter().enumerate().for_each(|(i, t)| {
-                t.tick(1, i as i32);
+                t.tick(&mut aux, i as i32);
             })
         });
     }
@@ -222,10 +274,11 @@ mod tests {
     #[bench]
     fn v3(b: &mut Bencher) {
         let tasks = prepare_v3();
+        let mut aux = Auxiliary::default();
 
         b.iter(|| {
             tasks.iter().enumerate().for_each(|(i, t)| {
-                t.tick(1, i as i32);
+                t.tick(&mut aux, i as i32);
             })
         });
     }
