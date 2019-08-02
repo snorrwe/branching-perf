@@ -1,10 +1,14 @@
 # Benchmarking Task prerequisite performance between 2 implementations
 
+__TBA__: add v3 description and results
+
 ## The task
 
 Implement a data structure that can hold tasks which are callables accepting 2 parameters: `input` which is the input to the task and `prerequisite` which is a number representing some precondition
 
 Tasks may or may not have a prerequisite if they do not have one the precondition is considered met by default.
+
+We want to be able to execute a collection of heterogeneous tasks.
 
 ## Implementation
 
@@ -29,12 +33,7 @@ We'll measure the average time to iterate and execute all tasks
 + js-bench/   # The JavaScript benchmark
     main.js
 
-+ tasks/      # The Rust Task implementations and the native benchmarks
-  ~ src/
-      lib.rs
-    Cargo.toml
-
-+ wasm-bench/ # The Rust WASM benchmarks
++ wasm-bench/ # The Rust WASM benchmarks and the native benchmarks
   ~ src/
       main.rs 
     Cargo.toml
@@ -47,7 +46,14 @@ The benchmarks were ran on a Intel Code i7-8700 processor<br>
 The Rust source was compiled using `cargo 1.37.0-nightly (4c1fa54d1 2019-06-24)` and `cargo-web 0.6.25`<br>
 The WASM and JS tests were ran using Node.JS 10.15.1<br>
 
+## Running
+
+- Native: cd `wasm-bench` then `cargo bench`
+- WASM: cd `wasm-bench` then `cargo web build --release` then `node target/wasm32-unknown-unknown/release/wasm-bench.js`
+- JS:`cd js-bench` then `node main.js`
+
 ## Results
+
 
 - Running `cargo bench` (note 1.8 million ns == 1.8 ms):
 
