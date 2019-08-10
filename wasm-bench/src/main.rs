@@ -22,7 +22,7 @@ impl Default for Auxiliary {
 }
 
 /// The common interface defining a task
-pub trait Task {
+pub trait Task: Sized {
     fn with_prereq(self, prereq: i32) -> Self;
     fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32;
 }
@@ -33,23 +33,23 @@ pub type TaskFnPtr = fn(&mut Auxiliary, i32) -> i32;
 /// Holds callable tasks and prerequisites
 pub struct TaskV1 {
     task: Box<TaskCallable>,
-    prereq: Option<i32>,
+    prereq: i32,
 }
 
 impl TaskV1 {
     pub fn new(task: Box<TaskCallable>) -> Self {
-        Self { task, prereq: None }
+        Self { task, prereq: -1 }
     }
 }
 
 impl Task for TaskV1 {
     fn with_prereq(mut self, prereq: i32) -> Self {
-        self.prereq = Some(prereq);
+        self.prereq = prereq;
         self
     }
 
     fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
-        if self.prereq.map(|p| p > prereq).unwrap_or(true) {
+        if self.prereq < prereq {
             (*self.task)(inp, prereq)
         } else {
             0
@@ -72,7 +72,13 @@ impl Task for TaskV2 {
     /// Wraps the original task with a precondition check
     fn with_prereq(self, prereq: i32) -> Self {
         Self::new(Box::new(
-            move |i, p| if prereq <= p { (*self.task)(i, p) } else { 0 },
+            move |i, p| {
+                if prereq <= p {
+                    (*self.task)(i, p)
+                } else {
+                    0
+                }
+            },
         ))
     }
 
@@ -86,27 +92,54 @@ impl Task for TaskV2 {
 /// But has the benefit of avoiding Boxes
 pub struct TaskV3 {
     task: TaskFnPtr,
-    prereq: Option<i32>,
+    prereq: i32,
 }
 
 impl TaskV3 {
     pub fn new(task: TaskFnPtr) -> Self {
-        Self { task, prereq: None }
+        Self {
+            task: task,
+            prereq: -1,
+        }
     }
 }
 
 impl Task for TaskV3 {
     fn with_prereq(mut self, prereq: i32) -> Self {
-        self.prereq = Some(prereq);
+        self.prereq = prereq;
         self
     }
 
     fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
-        if self.prereq.map(|p| p > prereq).unwrap_or(true) {
+        if self.prereq < prereq {
             (self.task)(inp, prereq)
         } else {
             0
         }
+    }
+}
+
+/// Holds callable tasks and prerequisites
+/// Does not check prereq on tick
+pub struct TaskV4 {
+    prereq: i32,
+    task: Box<TaskCallable>,
+}
+
+impl TaskV4 {
+    pub fn new(task: Box<TaskCallable>) -> Self {
+        Self { task, prereq: -1 }
+    }
+}
+
+impl Task for TaskV4 {
+    fn with_prereq(mut self, prereq: i32) -> Self {
+        self.prereq = prereq;
+        self
+    }
+
+    fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
+        (*self.task)(inp, prereq)
     }
 }
 
@@ -148,7 +181,8 @@ pub fn prepare_v3() -> Vec<TaskV3> {
     (0..1_000_000)
         .map(|i| {
             if i % 128 == 0 {
-                TaskV3::new(|i, j| i.data[pseudo_random_ind(j)] as i32).with_prereq(32)
+                let f = move |x: &mut Auxiliary, j| x.data[pseudo_random_ind(j)] as i32;
+                TaskV3::new(f).with_prereq(32)
             } else {
                 TaskV3::new(|i, j| i.data[pseudo_random_ind(j)] as i32 * 2)
             }
@@ -156,9 +190,41 @@ pub fn prepare_v3() -> Vec<TaskV3> {
         .collect::<Vec<_>>()
 }
 
+/// Execute tasks by filtering them first
+pub struct Task4Executor {
+    tasks: Vec<TaskV4>,
+}
+
+impl Task4Executor {
+    pub fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
+        let mut tasks = Vec::with_capacity(self.tasks.len());
+        tasks.extend(self.tasks.iter().filter(|t| t.prereq < prereq));
+        tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| t.tick(inp, i as i32))
+            .sum()
+    }
+}
+
+pub fn prepare_v4<'a>() -> Task4Executor {
+    let tasks = (0..1_000_000)
+        .map(|i| {
+            if i % 128 == 0 {
+                let f = move |x: &mut Auxiliary, j| x.data[pseudo_random_ind(j)] as i32;
+                TaskV4::new(Box::new(f)).with_prereq(32)
+            } else {
+                TaskV4::new(Box::new(|i, j| i.data[pseudo_random_ind(j)] as i32 * 2))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Task4Executor { tasks }
+}
+
 // Simulate random memory access
 pub fn pseudo_random_ind(i: i32) -> usize {
-    let i = match i & 255 {
+    let i = match i & 128 {
         1 => i * 2,
         2 => i * 8,
         4 => i * 3,
@@ -220,20 +286,50 @@ fn bench_v3() -> f32 {
     js_benchmark!(tasks)
 }
 
+fn bench_v4() -> f32 {
+    let tasks = prepare_v4();
+
+    let results = (0..1_000)
+        .map(|i| {
+            let mut aux = Auxiliary::default();
+            let start = js! {return Date.now();};
+
+            tasks.tick(&mut aux, i as i32);
+
+            let duration = js! {
+                const start = @{start};
+                const dur = Date.now() - start;
+                return dur;
+            };
+
+            duration.try_into().unwrap()
+        })
+        .collect::<Vec<f64>>();
+
+    let l = results.len();
+    let sum: f64 = results.into_iter().sum();
+
+    let avg = sum as f32 / l as f32;
+    avg
+}
+
 fn main() {
     stdweb::initialize();
 
     let v1 = bench_v1();
     let v2 = bench_v2();
     let v3 = bench_v3();
+    let v4 = bench_v4();
 
     js! {
         const v1 = @{v1};
         const v2 = @{v2};
         const v3 = @{v3};
+        const v4 = @{v4};
         console.log("V1: ", v1, "ms");
         console.log("V2: ", v2, "ms");
         console.log("V3: ", v3, "ms");
+        console.log("V4: ", v4, "ms");
     };
 }
 
@@ -280,6 +376,19 @@ mod tests {
             tasks.iter().enumerate().for_each(|(i, t)| {
                 t.tick(&mut aux, i as i32);
             })
+        });
+    }
+
+    #[bench]
+    fn v4(b: &mut Bencher) {
+        let tasks = prepare_v4();
+        let mut aux = Auxiliary::default();
+
+        let mut i = 0;
+        b.iter(|| {
+            i += 1;
+            // i %= 128;
+            tasks.tick(&mut aux, i as i32)
         });
     }
 
