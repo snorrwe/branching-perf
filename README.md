@@ -1,7 +1,5 @@
 # Benchmarking Task prerequisite performance between 2 implementations
 
-__TBA__: add v3 description and results
-
 ## The task
 
 Implement a data structure that can hold tasks which are callables accepting 2 parameters: `input` which is the input to the task and `prerequisite` which is a number representing some precondition
@@ -57,24 +55,19 @@ The WASM and JS tests were ran using Node.JS 10.15.1<br>
 
 - Running `cargo bench` (note 1.8 million ns == 1.8 ms):
 
-    - test v1 ... bench:   1,873,860 ns/iter (+/- 98,513)
-    - test v2 ... bench:   1,540,270 ns/iter (+/- 56,746)
+    - test tests::v1                   ... bench:   2,891,097 ns/iter (+/- 137,348)
+    - test tests::v2                   ... bench:   2,783,485 ns/iter (+/- 199,645)
+    - test tests::v3                   ... bench:   2,269,960 ns/iter (+/- 84,831)
+    - test tests::v4                   ... bench:   3,859,810 ns/iter (+/- 247,616)
 
 - Running `cargo web build --release` then `node wasm-bench.js` in the target directory to execute the wasm code:
 
-    - V1:  5.364999771118164 ms
-    - V2:  5.193999767303467 ms
+    - V1:  5.698999881744385 ms
+    - V2:  5.040999889373779 ms
+    - V3:  3.9130001068115234 ms
+    - V4:  7.288000106811523 ms
 
 - Running `node main.js` in the js-bench directory:
 
     - V1:  15.043 ms
     - V2:  14.371 ms
-
-
-The native code gained an about 20% speedup by the V2 implementation. While the WASM performance gains are negligible. The JavaScript implementation gained about 5% while the WASM implementation gained about 3%.
-
-WASM overall was still 3 times faster than the JavaScript implementation. While the native Rust code ran 3 times faster than the WASM.
-
-## Conclusion
-
-Avoiding the unnecessary checks benefits native code execution greatly, supposedly because of the branch predictor of the CPU. However the same could be barely said about the WASM and JavaScript implementations. What I learned from this experiment is that you should not expect that the same techinques used doing CPU optimizations will work the same when compiling to WASM. 

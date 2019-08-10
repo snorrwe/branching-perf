@@ -193,16 +193,28 @@ pub fn prepare_v3() -> Vec<TaskV3> {
 /// Execute tasks by filtering them first
 pub struct Task4Executor {
     tasks: Vec<TaskV4>,
+    executor_buffer: Vec<*const TaskV4>,
 }
 
 impl Task4Executor {
-    pub fn tick(&self, inp: &mut Auxiliary, prereq: i32) -> i32 {
-        let mut tasks = Vec::with_capacity(self.tasks.len());
-        tasks.extend(self.tasks.iter().filter(|t| t.prereq < prereq));
-        tasks
+    pub fn tick(&mut self, inp: &mut Auxiliary, prereq: i32) -> i32 {
+        self.executor_buffer.clear();
+        self.executor_buffer.reserve(self.tasks.len());
+
+        self.executor_buffer.extend(
+            self.tasks
+                .iter()
+                .filter(|t| t.prereq < prereq)
+                .map(|x| x as *const _),
+        );
+        self.executor_buffer
             .iter()
+            .cloned()
             .enumerate()
-            .map(|(i, t)| t.tick(inp, i as i32))
+            .map(|(i, t)| unsafe {
+                let t = &*t;
+                t.tick(inp, i as i32)
+            })
             .sum()
     }
 }
@@ -219,12 +231,15 @@ pub fn prepare_v4<'a>() -> Task4Executor {
         })
         .collect::<Vec<_>>();
 
-    Task4Executor { tasks }
+    Task4Executor {
+        tasks,
+        executor_buffer: Default::default(),
+    }
 }
 
 // Simulate random memory access
 pub fn pseudo_random_ind(i: i32) -> usize {
-    let i = match i & 128 {
+    let i = match i & ((1 << 8) - 1) {
         1 => i * 2,
         2 => i * 8,
         4 => i * 3,
@@ -287,7 +302,7 @@ fn bench_v3() -> f32 {
 }
 
 fn bench_v4() -> f32 {
-    let tasks = prepare_v4();
+    let mut tasks = prepare_v4();
 
     let results = (0..1_000)
         .map(|i| {
@@ -381,13 +396,12 @@ mod tests {
 
     #[bench]
     fn v4(b: &mut Bencher) {
-        let tasks = prepare_v4();
+        let mut tasks = prepare_v4();
         let mut aux = Auxiliary::default();
 
         let mut i = 0;
         b.iter(|| {
             i += 1;
-            // i %= 128;
             tasks.tick(&mut aux, i as i32)
         });
     }
